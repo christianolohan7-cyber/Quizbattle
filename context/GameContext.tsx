@@ -1,7 +1,7 @@
-import React, { createContext, useReducer, ReactNode } from 'react';
+import React, { createContext, ReactNode, useReducer } from "react";
 
 // --- FSM States ---
-export type GameState = 'lobby' | 'match' | 'round' | 'result' | 'game_over';
+export type GameState = "lobby" | "match" | "round" | "result" | "game_over";
 
 // --- Types ---
 export interface Player {
@@ -17,76 +17,118 @@ export interface MatchState {
   score: number;
   opponentScore: number;
   currentQuestionIndex: number;
-  streak: number;
-  lifelines: number;
+  p1Streak: number;
+  p2Streak: number;
+  p1Lifelines: number;
+  p2Lifelines: number;
+  activeQuestions: any[];
 }
 
-// --- Initial State ---
+// --- Initial State with valid player ---
 const initialState: MatchState = {
-  state: 'lobby',
-  player: { id: 'p1', name: 'Student 1', elo: 1200 }, // Default, will be loaded from storage
+  state: "lobby",
+  player: { id: "p1", name: "Player 1", elo: 1200 }, // always present
   opponent: null,
   score: 0,
   opponentScore: 0,
   currentQuestionIndex: 0,
-  streak: 0,
-  lifelines: 1, // 1 lifeline per game (50/50 logic)
+  p1Streak: 0,
+  p2Streak: 0,
+  p1Lifelines: 1,
+  p2Lifelines: 1,
+  activeQuestions: [],
 };
 
 // --- Actions ---
 type Action =
-  | { type: 'START_MATCH'; payload: Player }
-  | { type: 'START_ROUND' }
-  | { type: 'ANSWER_QUESTION'; payload: { isCorrect: boolean; points: number } }
-  | { type: 'OPPONENT_ANSWER'; payload: { isCorrect: boolean; points: number } }
-  | { type: 'USE_LIFELINE' }
-  | { type: 'NEXT_QUESTION' }
-  | { type: 'SHOW_RESULT' }
-  | { type: 'END_GAME' }
-  | { type: 'RESET_LOBBY' };
+  | { type: "SET_PLAYER"; payload: Player }
+  | { type: "SET_OPPONENT"; payload: Player }
+  | { type: "START_MATCH"; payload: { opponent: Player; questions: any[] } }
+  | { type: "START_ROUND" }
+  | {
+    type: "ANSWER_QUESTION";
+    payload: {
+      player: "p1" | "p2";
+      isCorrect: boolean;
+      points: number;
+    };
+  }
+  | { type: "USE_LIFELINE"; payload: { player: "p1" | "p2" } }
+  | { type: "NEXT_QUESTION" }
+  | { type: "SHOW_RESULT" }
+  | { type: "UPDATE_ELO"; payload: { p1EloChange: number; p2EloChange: number } }
+  | { type: "RESET_LOBBY" };
 
 // --- Reducer Logic ---
 function gameReducer(state: MatchState, action: Action): MatchState {
   switch (action.type) {
-    case 'START_MATCH':
+    case "SET_PLAYER":
+      return { ...state, player: action.payload };
+    case "SET_OPPONENT":
+      return { ...state, opponent: action.payload };
+    case "START_MATCH":
       return {
         ...state,
-        state: 'match',
-        opponent: action.payload,
+        state: "match",
+        opponent: action.payload.opponent,
+        activeQuestions: action.payload.questions,
         score: 0,
         opponentScore: 0,
         currentQuestionIndex: 0,
-        streak: 0,
-        lifelines: 1,
+        p1Streak: 0,
+        p2Streak: 0,
+        p1Lifelines: 1,
+        p2Lifelines: 1,
       };
-    case 'START_ROUND':
-      return { ...state, state: 'round' };
-    case 'ANSWER_QUESTION':
-      if (action.payload.isCorrect) {
-        const streakBonus = state.streak * 10;
-        return {
-          ...state,
-          score: state.score + action.payload.points + streakBonus,
-          streak: state.streak + 1,
-        };
+    case "START_ROUND":
+      return { ...state, state: "round" };
+    case "ANSWER_QUESTION":
+      if (action.payload.player === "p1") {
+        if (action.payload.isCorrect) {
+          return {
+            ...state,
+            score: state.score + action.payload.points,
+            p1Streak: state.p1Streak + 1,
+          };
+        } else {
+          return { ...state, p1Streak: 0 };
+        }
       } else {
-        return { ...state, streak: 0 };
+        if (action.payload.isCorrect) {
+          return {
+            ...state,
+            opponentScore: state.opponentScore + action.payload.points,
+            p2Streak: state.p2Streak + 1,
+          };
+        } else {
+          return { ...state, p2Streak: 0 };
+        }
       }
-    case 'OPPONENT_ANSWER':
-      if (action.payload.isCorrect) {
-        return { ...state, opponentScore: state.opponentScore + action.payload.points };
+    case "USE_LIFELINE":
+      if (action.payload.player === "p1") {
+        return { ...state, p1Lifelines: Math.max(0, state.p1Lifelines - 1) };
+      } else {
+        return { ...state, p2Lifelines: Math.max(0, state.p2Lifelines - 1) };
       }
-      return state;
-    case 'USE_LIFELINE':
-      return { ...state, lifelines: Math.max(0, state.lifelines - 1) };
-    case 'NEXT_QUESTION':
+    case "NEXT_QUESTION":
       return { ...state, currentQuestionIndex: state.currentQuestionIndex + 1 };
-    case 'SHOW_RESULT':
-      return { ...state, state: 'result' };
-    case 'END_GAME':
-      return { ...state, state: 'game_over' };
-    case 'RESET_LOBBY':
-      return { ...initialState, player: state.player };
+    case "SHOW_RESULT":
+      return { ...state, state: "result" };
+    case "UPDATE_ELO": {
+      return {
+        ...state,
+        player: { ...state.player, elo: state.player.elo + action.payload.p1EloChange },
+        opponent: state.opponent
+          ? { ...state.opponent, elo: state.opponent.elo + action.payload.p2EloChange }
+          : null,
+      };
+    }
+    case "RESET_LOBBY":
+      return {
+        ...initialState,
+        player: state.player,      // keep updated player
+        opponent: state.opponent,  // keep updated opponent
+      };
     default:
       return state;
   }
